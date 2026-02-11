@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 
 	"github.com/markbates/goth"
@@ -164,12 +163,12 @@ func (p *Provider) FetchUser(session goth.Session) (goth.User, error) {
 	return user, err
 }
 
-//RefreshTokenAvailable refresh token is provided by auth provider or not
+// RefreshTokenAvailable refresh token is provided by auth provider or not
 func (p *Provider) RefreshTokenAvailable() bool {
 	return true
 }
 
-//RefreshToken get new access token based on the refresh token
+// RefreshToken get new access token based on the refresh token
 func (p *Provider) RefreshToken(refreshToken string) (*oauth2.Token, error) {
 	token := &oauth2.Token{RefreshToken: refreshToken}
 	ts := p.config.TokenSource(goth.ContextForClient(p.Client()), token)
@@ -199,7 +198,7 @@ func userFromReader(r io.Reader, user *goth.User) error {
 		UserPrincipalName string   `json:"userPrincipalName"` // The user's principal name.
 	}{}
 
-	userBytes, err := ioutil.ReadAll(r)
+	userBytes, err := io.ReadAll(r)
 	if err != nil {
 		return err
 	}
@@ -216,7 +215,7 @@ func userFromReader(r io.Reader, user *goth.User) error {
 	user.Location = u.OfficeLocation
 	user.UserID = u.ID
 	user.AvatarURL = graphAPIResource + fmt.Sprintf("users/%s/photo/$value", u.ID)
-	// Make sure all of the information returned is available via RawData
+	// Make sure all the information returned is available via RawData
 	if err := json.Unmarshal(userBytes, &user.RawData); err != nil {
 		return err
 	}

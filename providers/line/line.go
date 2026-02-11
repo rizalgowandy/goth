@@ -5,11 +5,11 @@ package line
 import (
 	"bytes"
 	"encoding/json"
-	"io/ioutil"
+	"fmt"
+	"io"
 	"net/http"
 
-	"fmt"
-
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/markbates/goth"
 	"golang.org/x/oauth2"
 )
@@ -18,7 +18,13 @@ const (
 	authURL      string = "https://access.line.me/oauth2/v2.1/authorize"
 	tokenURL     string = "https://api.line.me/oauth2/v2.1/token"
 	endpointUser string = "https://api.line.me/v2/profile"
+	issuerURL    string = "https://access.line.me"
 )
+
+type IDTokenClaims struct {
+	jwt.RegisteredClaims
+	Email string `json:"email"`
+}
 
 // Provider is the implementation of `goth.Provider` for accessing Line.me.
 type Provider struct {
@@ -96,17 +102,15 @@ func (p *Provider) FetchUser(session goth.Session) (goth.User, error) {
 
 	response, err := c.Do(req)
 	if err != nil {
-		if response != nil {
-			response.Body.Close()
-		}
 		return user, err
 	}
+	defer response.Body.Close()
 
 	if response.StatusCode != http.StatusOK {
 		return user, fmt.Errorf("%s responded with a %d trying to fetch user information", p.providerName, response.StatusCode)
 	}
 
-	bits, err := ioutil.ReadAll(response.Body)
+	bits, err := io.ReadAll(response.Body)
 	if err != nil {
 		return user, err
 	}
@@ -126,6 +130,13 @@ func (p *Provider) FetchUser(session goth.Session) (goth.User, error) {
 	user.NickName = u.DisplayName
 	user.AvatarURL = u.PictureURL
 	user.UserID = u.UserID
+
+	if sess.IDToken != "" {
+		if err = p.addDataFromIdToken(sess.IDToken, &user); err != nil {
+			return user, err
+		}
+	}
+
 	return user, err
 }
 
@@ -142,19 +153,17 @@ func newConfig(provider *Provider, scopes []string) *oauth2.Config {
 	}
 
 	if len(scopes) > 0 {
-		for _, scope := range scopes {
-			c.Scopes = append(c.Scopes, scope)
-		}
+		c.Scopes = append(c.Scopes, scopes...)
 	}
 	return c
 }
 
-//RefreshTokenAvailable refresh token is provided by auth provider or not
+// RefreshTokenAvailable refresh token is provided by auth provider or not
 func (p *Provider) RefreshTokenAvailable() bool {
 	return false
 }
 
-//RefreshToken get new access token based on the refresh token
+// RefreshToken get new access token based on the refresh token
 func (p *Provider) RefreshToken(refreshToken string) (*oauth2.Token, error) {
 	return nil, nil
 }
@@ -167,4 +176,21 @@ func (p *Provider) SetBotPrompt(botPrompt string) {
 		return
 	}
 	p.authCodeOptions = append(p.authCodeOptions, oauth2.SetAuthURLParam("bot_prompt", botPrompt))
+}
+
+func (p *Provider) addDataFromIdToken(idToken string, user *goth.User) error {
+	token, err := jwt.ParseWithClaims(idToken, &IDTokenClaims{}, func(t *jwt.Token) (interface{}, error) {
+		return []byte(p.Secret), nil
+	},
+		jwt.WithAudience(p.ClientKey),
+		jwt.WithIssuer(issuerURL),
+		jwt.WithExpirationRequired(),
+	)
+	if err != nil {
+		return err
+	}
+
+	user.Email = token.Claims.(*IDTokenClaims).Email
+
+	return nil
 }

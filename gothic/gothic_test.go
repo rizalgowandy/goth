@@ -5,7 +5,7 @@ import (
 	"compress/gzip"
 	"fmt"
 	"html"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -149,7 +149,7 @@ func Test_CompleteUserAuthWithSessionDeducedProvider(t *testing.T) {
 	a := assert.New(t)
 
 	res := httptest.NewRecorder()
-	// Inteintionally omit a provider argument, force looking in session.
+	// Intentionally omit a provider argument, force looking in session.
 	req, err := http.NewRequest("GET", "/auth/callback", nil)
 	a.NoError(err)
 
@@ -283,7 +283,7 @@ func ungzipString(value string) string {
 	if err != nil {
 		return "err"
 	}
-	s, err := ioutil.ReadAll(r)
+	s, err := io.ReadAll(r)
 	if err != nil {
 		return "err"
 	}

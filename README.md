@@ -4,7 +4,7 @@ Package goth provides a simple, clean, and idiomatic way to write authentication
 packages for Go web applications.
 
 Unlike other similar packages, Goth, lets you write OAuth, OAuth2, or any other
-protocol providers, as long as they implement the `Provider` and `Session` interfaces.
+protocol providers, as long as they implement the [Provider](https://github.com/markbates/goth/blob/master/provider.go#L13-L22) and [Session](https://github.com/markbates/goth/blob/master/session.go#L13-L21) interfaces.
 
 This package was inspired by [https://github.com/intridea/omniauth](https://github.com/intridea/omniauth).
 
@@ -23,10 +23,12 @@ $ go get github.com/markbates/goth
 * Battle.net
 * Bitbucket
 * Box
+* ClassLink
 * Cloud Foundry
 * Dailymotion
 * Deezer
 * DigitalOcean
+* DingTalk
 * Discord
 * Dropbox
 * Eve Online
@@ -36,15 +38,14 @@ $ go get github.com/markbates/goth
 * GitHub
 * Gitlab
 * Google
-* Google+ (deprecated)
 * Heroku
 * InfluxCloud
 * Instagram
 * Intercom
 * Kakao
 * Lastfm
-* Linkedin
 * LINE
+* Linkedin
 * Mailru
 * Meetup
 * MicrosoftOnline
@@ -54,7 +55,9 @@ $ go get github.com/markbates/goth
 * OneDrive
 * OpenID Connect (auto discovery)
 * Oura
+* Patreon
 * Paypal
+* Reddit
 * SalesForce
 * Shopify
 * Slack
@@ -70,8 +73,8 @@ $ go get github.com/markbates/goth
 * Typetalk
 * Uber
 * VK
-* Wepay
 * WeCom
+* Wepay
 * Xero
 * Yahoo
 * Yammer

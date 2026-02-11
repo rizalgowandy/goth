@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -51,13 +51,14 @@ const (
 
 // Provider is the implementation of `goth.Provider` for accessing OpenID Connect provider
 type Provider struct {
-	ClientKey    string
-	Secret       string
-	CallbackURL  string
-	HTTPClient   *http.Client
-	OpenIDConfig *OpenIDConfig
-	config       *oauth2.Config
-	providerName string
+	ClientKey       string
+	Secret          string
+	CallbackURL     string
+	HTTPClient      *http.Client
+	OpenIDConfig    *OpenIDConfig
+	config          *oauth2.Config
+	authCodeOptions []oauth2.AuthCodeOption
+	providerName    string
 
 	UserIdClaims    []string
 	NameClaims      []string
@@ -79,7 +80,7 @@ type OpenIDConfig struct {
 	// If OpenID discovery is enabled, the end_session_endpoint field can optionally be provided
 	// in the discovery endpoint response according to OpenID spec. See:
 	// https://openid.net/specs/openid-connect-session-1_0-17.html#OPMetadata
-	EndSessionEndpoint string `json:"end_session_endpoint, omitempty"`
+	EndSessionEndpoint string `json:"end_session_endpoint,omitempty"`
 	Issuer             string `json:"issuer"`
 }
 
@@ -90,12 +91,12 @@ type RefreshTokenResponse struct {
 	// refresh token flow. As a result, a new ID token may not be returned in a successful
 	// response.
 	// See more: https://openid.net/specs/openid-connect-core-1_0.html#RefreshingAccessToken
-	IdToken string `json:"id_token, omitempty"`
+	IdToken string `json:"id_token,omitempty"`
 
 	// The OAuth spec defines the refresh token as an optional response field in the
 	// refresh token flow. As a result, a new refresh token may not be returned in a successful
 	// response.
-	//See more: https://www.oauth.com/oauth2-servers/making-authenticated-requests/refreshing-an-access-token/
+	// See more: https://www.oauth.com/oauth2-servers/making-authenticated-requests/refreshing-an-access-token/
 	RefreshToken string `json:"refresh_token,omitempty"`
 }
 
@@ -107,6 +108,18 @@ type RefreshTokenResponse struct {
 // ID Token decryption is not (yet) supported
 // UserInfo decryption is not (yet) supported
 func New(clientKey, secret, callbackURL, openIDAutoDiscoveryURL string, scopes ...string) (*Provider, error) {
+	return NewNamed("", clientKey, secret, callbackURL, openIDAutoDiscoveryURL, scopes...)
+}
+
+// NewNamed is similar to New(...) but can be used to set a custom name for the
+// provider in order to use multiple OIDC providers
+func NewNamed(name, clientKey, secret, callbackURL, openIDAutoDiscoveryURL string, scopes ...string) (*Provider, error) {
+	switch len(name) {
+	case 0:
+		name = "openid-connect"
+	default:
+		name = fmt.Sprintf("%s-oidc", strings.ToLower(name))
+	}
 	p := &Provider{
 		ClientKey:   clientKey,
 		Secret:      secret,
@@ -121,7 +134,7 @@ func New(clientKey, secret, callbackURL, openIDAutoDiscoveryURL string, scopes .
 		LastNameClaims:  []string{FamilyNameClaim},
 		LocationClaims:  []string{AddressClaim},
 
-		providerName: "openid-connect",
+		providerName: name,
 	}
 
 	openIDConfig, err := getOpenIDConfig(p, openIDAutoDiscoveryURL)
@@ -131,6 +144,36 @@ func New(clientKey, secret, callbackURL, openIDAutoDiscoveryURL string, scopes .
 	p.OpenIDConfig = openIDConfig
 
 	p.config = newConfig(p, scopes, openIDConfig)
+	return p, nil
+}
+
+// NewCustomisedURL is similar to New(...) but can be used to set custom URLs hence omit the auto-discovery step
+func NewCustomisedURL(clientKey, secret, callbackURL, authURL, tokenURL, issuerURL, userInfoURL, endSessionEndpointURL string, scopes ...string) (*Provider, error) {
+	p := &Provider{
+		ClientKey:   clientKey,
+		Secret:      secret,
+		CallbackURL: callbackURL,
+		OpenIDConfig: &OpenIDConfig{
+			AuthEndpoint:       authURL,
+			TokenEndpoint:      tokenURL,
+			Issuer:             issuerURL,
+			UserInfoEndpoint:   userInfoURL,
+			EndSessionEndpoint: endSessionEndpointURL,
+		},
+
+		UserIdClaims:    []string{subjectClaim},
+		NameClaims:      []string{NameClaim},
+		NickNameClaims:  []string{NicknameClaim, PreferredUsernameClaim},
+		EmailClaims:     []string{EmailClaim},
+		AvatarURLClaims: []string{PictureClaim},
+		FirstNameClaims: []string{GivenNameClaim},
+		LastNameClaims:  []string{FamilyNameClaim},
+		LocationClaims:  []string{AddressClaim},
+
+		providerName: "openid-connect",
+	}
+
+	p.config = newConfig(p, scopes, p.OpenIDConfig)
 	return p, nil
 }
 
@@ -144,6 +187,14 @@ func (p *Provider) SetName(name string) {
 	p.providerName = name
 }
 
+// SetAuthCodeOptions sets additional parameters for the authentication URL.
+// It takes a map of string key-value pairs and appends them to the provider's authCodeOptions.
+func (p *Provider) SetAuthCodeOptions(params map[string]string) {
+	for k, v := range params {
+		p.authCodeOptions = append(p.authCodeOptions, oauth2.SetAuthURLParam(k, v))
+	}
+}
+
 func (p *Provider) Client() *http.Client {
 	return goth.HTTPClientWithFallBack(p.HTTPClient)
 }
@@ -153,14 +204,14 @@ func (p *Provider) Debug(debug bool) {}
 
 // BeginAuth asks the OpenID Connect provider for an authentication end-point.
 func (p *Provider) BeginAuth(state string) (goth.Session, error) {
-	url := p.config.AuthCodeURL(state)
+	url := p.config.AuthCodeURL(state, p.authCodeOptions...)
 	session := &Session{
 		AuthURL: url,
 	}
 	return session, nil
 }
 
-// FetchUser will use the the id_token and access requested information about the user.
+// FetchUser will use the id_token and access requested information about the user.
 func (p *Provider) FetchUser(session goth.Session) (goth.User, error) {
 	sess := session.(*Session)
 
@@ -203,12 +254,12 @@ func (p *Provider) FetchUser(session goth.Session) (goth.User, error) {
 	return user, err
 }
 
-//RefreshTokenAvailable refresh token is provided by auth provider or not
+// RefreshTokenAvailable refresh token is provided by auth provider or not
 func (p *Provider) RefreshTokenAvailable() bool {
 	return true
 }
 
-//RefreshToken get new access token based on the refresh token
+// RefreshToken get new access token based on the refresh token
 func (p *Provider) RefreshToken(refreshToken string) (*oauth2.Token, error) {
 	token := &oauth2.Token{RefreshToken: refreshToken}
 	ts := p.config.TokenSource(oauth2.NoContext, token)
@@ -246,7 +297,7 @@ func (p *Provider) RefreshTokenWithIDToken(refreshToken string) (*RefreshTokenRe
 		return nil, fmt.Errorf("Non-200 response from RefreshToken: %d, WWW-Authenticate=%s", resp.StatusCode, resp.Header.Get("WWW-Authenticate"))
 	}
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}
@@ -359,7 +410,7 @@ func (p *Provider) fetchUserInfo(url, accessToken string) (map[string]interface{
 
 	// The UserInfo Claims MUST be returned as the members of a JSON object
 	// http://openid.net/specs/openid-connect-core-1_0.html#UserInfoResponse
-	data, err := ioutil.ReadAll(resp.Body)
+	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}
@@ -374,7 +425,11 @@ func getOpenIDConfig(p *Provider, openIDAutoDiscoveryURL string) (*OpenIDConfig,
 	}
 	defer res.Body.Close()
 
-	body, err := ioutil.ReadAll(res.Body)
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return nil, fmt.Errorf("Non-success code for Discovery URL: %d", res.StatusCode)
+	}
+
+	body, err := io.ReadAll(res.Body)
 	if err != nil {
 		return nil, err
 	}

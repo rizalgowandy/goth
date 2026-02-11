@@ -6,19 +6,19 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"net/url"
+	"strconv"
 
-	"fmt"
 	"github.com/markbates/goth"
 	"golang.org/x/oauth2"
 )
 
 const (
 	authURL         string = "https://connect.deezer.com/oauth/auth.php"
-	tokenURL        string = "https://connect.deezer.com/oauth/access_token.php"
+	tokenURL        string = "https://connect.deezer.com/oauth/access_token.php?output=json"
 	endpointProfile string = "https://api.deezer.com/user/me"
 )
 
@@ -97,7 +97,7 @@ func (p *Provider) FetchUser(session goth.Session) (goth.User, error) {
 		return user, fmt.Errorf("%s responded with a %d trying to fetch user information", p.providerName, response.StatusCode)
 	}
 
-	bits, err := ioutil.ReadAll(response.Body)
+	bits, err := io.ReadAll(response.Body)
 	if err != nil {
 		return user, err
 	}
@@ -115,7 +115,7 @@ func (p *Provider) FetchUser(session goth.Session) (goth.User, error) {
 // *goth.User attributes
 func userFromReader(reader io.Reader, user *goth.User) error {
 	u := struct {
-		ID        string `json:"id"`
+		ID        int    `json:"id"`
 		Email     string `json:"email"`
 		FirstName string `json:"firstname"`
 		LastName  string `json:"lastname"`
@@ -129,7 +129,7 @@ func userFromReader(reader io.Reader, user *goth.User) error {
 		return err
 	}
 
-	user.UserID = u.ID
+	user.UserID = strconv.Itoa(u.ID)
 	user.Email = u.Email
 	user.FirstName = u.FirstName
 	user.LastName = u.LastName
@@ -168,12 +168,12 @@ func newConfig(provider *Provider, scopes []string) *oauth2.Config {
 	return c
 }
 
-//RefreshTokenAvailable refresh token is not provided by deezer
+// RefreshTokenAvailable refresh token is not provided by deezer
 func (p *Provider) RefreshTokenAvailable() bool {
 	return false
 }
 
-//RefreshToken refresh token is not provided by deezer
+// RefreshToken refresh token is not provided by deezer
 func (p *Provider) RefreshToken(refreshToken string) (*oauth2.Token, error) {
 	return nil, errors.New("Refresh token is not provided by deezer")
 }

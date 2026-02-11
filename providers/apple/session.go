@@ -1,6 +1,7 @@
 package apple
 
 import (
+	"context"
 	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/base64"
@@ -9,7 +10,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/golang-jwt/jwt/v4"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/lestrrat-go/jwx/jwk"
 	"github.com/markbates/goth"
 	"golang.org/x/oauth2"
@@ -23,6 +24,7 @@ type ID struct {
 	Sub            string `json:"sub"`
 	Email          string `json:"email"`
 	IsPrivateEmail bool   `json:"is_private_email"`
+	EmailVerified  bool   `json:"email_verified"`
 }
 
 type Session struct {
@@ -46,11 +48,12 @@ func (s Session) Marshal() string {
 }
 
 type IDTokenClaims struct {
-	jwt.StandardClaims
-	AccessTokenHash string `json:"at_hash"`
-	AuthTime        int    `json:"auth_time"`
-	Email           string `json:"email"`
-	IsPrivateEmail  bool   `json:"is_private_email,string"`
+	jwt.RegisteredClaims
+	AccessTokenHash string     `json:"at_hash"`
+	AuthTime        int        `json:"auth_time"`
+	Email           string     `json:"email"`
+	IsPrivateEmail  BoolString `json:"is_private_email"`
+	EmailVerified   BoolString `json:"email_verified,omitempty"`
 }
 
 func (s *Session) Authorize(provider goth.Provider, params goth.Params) (string, error) {
@@ -60,7 +63,7 @@ func (s *Session) Authorize(provider goth.Provider, params goth.Params) (string,
 		oauth2.SetAuthURLParam("client_id", p.clientId),
 		oauth2.SetAuthURLParam("client_secret", p.secret),
 	}
-	token, err := p.config.Exchange(oauth2.NoContext, params.Get("code"), opts...)
+	token, err := p.config.Exchange(context.Background(), params.Get("code"), opts...)
 	if err != nil {
 		return "", err
 	}
@@ -77,17 +80,10 @@ func (s *Session) Authorize(provider goth.Provider, params goth.Params) (string,
 		idToken, err := jwt.ParseWithClaims(idToken.(string), &IDTokenClaims{}, func(t *jwt.Token) (interface{}, error) {
 			kid := t.Header["kid"].(string)
 			claims := t.Claims.(*IDTokenClaims)
-			vErr := new(jwt.ValidationError)
-			if !claims.VerifyAudience(p.clientId, true) {
-				vErr.Inner = fmt.Errorf("audience is incorrect")
-				vErr.Errors |= jwt.ValidationErrorAudience
-			}
-			if !claims.VerifyIssuer(AppleAudOrIss, true) {
-				vErr.Inner = fmt.Errorf("issuer is incorrect")
-				vErr.Errors |= jwt.ValidationErrorIssuer
-			}
-			if vErr.Errors > 0 {
-				return nil, vErr
+			validator := jwt.NewValidator(jwt.WithAudience(p.clientId), jwt.WithIssuer(AppleAudOrIss))
+			err := validator.Validate(claims)
+			if err != nil {
+				return nil, err
 			}
 
 			// per OpenID Connect Core 1.0 §3.2.2.9, Access Token Validation
@@ -95,27 +91,22 @@ func (s *Session) Authorize(provider goth.Provider, params goth.Params) (string,
 			halfHash := hash[0:(len(hash) / 2)]
 			encodedHalfHash := base64.RawURLEncoding.EncodeToString(halfHash)
 			if encodedHalfHash != claims.AccessTokenHash {
-				vErr.Inner = fmt.Errorf(`identity token invalid`)
-				vErr.Errors |= jwt.ValidationErrorClaimsInvalid
-				return nil, vErr
+				return nil, fmt.Errorf(`identity token invalid`)
 			}
 
 			// get the public key for verifying the identity token signature
-			set, err := jwk.FetchHTTP(idTokenVerificationKeyEndpoint, jwk.WithHTTPClient(p.Client()))
+			set, err := jwk.Fetch(context.Background(), idTokenVerificationKeyEndpoint, jwk.WithHTTPClient(p.Client()))
 			if err != nil {
 				return nil, err
 			}
-			selectedKey := set.Keys[0]
-			for _, key := range set.Keys {
-				if key.KeyID() == kid {
-					selectedKey = key
-					break
-				}
+			selectedKey, found := set.LookupKeyID(kid)
+			if !found {
+				return nil, errors.New("could not find matching public key")
 			}
-			pubKeyIface, _ := selectedKey.Materialize()
-			pubKey, ok := pubKeyIface.(*rsa.PublicKey)
-			if !ok {
-				return nil, fmt.Errorf(`expected RSA public key from %s`, idTokenVerificationKeyEndpoint)
+			pubKey := &rsa.PublicKey{}
+			err = selectedKey.Raw(pubKey)
+			if err != nil {
+				return nil, err
 			}
 			return pubKey, nil
 		})
@@ -125,7 +116,8 @@ func (s *Session) Authorize(provider goth.Provider, params goth.Params) (string,
 		s.ID = ID{
 			Sub:            idToken.Claims.(*IDTokenClaims).Subject,
 			Email:          idToken.Claims.(*IDTokenClaims).Email,
-			IsPrivateEmail: idToken.Claims.(*IDTokenClaims).IsPrivateEmail,
+			IsPrivateEmail: idToken.Claims.(*IDTokenClaims).IsPrivateEmail.Value(),
+			EmailVerified:  idToken.Claims.(*IDTokenClaims).EmailVerified.Value(),
 		}
 	}
 
@@ -134,4 +126,37 @@ func (s *Session) Authorize(provider goth.Provider, params goth.Params) (string,
 
 func (s Session) String() string {
 	return s.Marshal()
+}
+
+// BoolString is a type that can be unmarshalled from a JSON field that can be either a boolean or a string.
+// It is used to unmarshal some fields in the Apple ID token that can be sent as either boolean or string.
+// See https://developer.apple.com/documentation/sign_in_with_apple/sign_in_with_apple_rest_api/authenticating_users_with_sign_in_with_apple#3383773
+type BoolString struct {
+	BoolValue   bool
+	StringValue string
+	IsValidBool bool
+}
+
+func (bs *BoolString) UnmarshalJSON(data []byte) error {
+	var b bool
+	if err := json.Unmarshal(data, &b); err == nil {
+		bs.BoolValue = b
+		bs.IsValidBool = true
+		return nil
+	}
+
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		bs.StringValue = s
+		return nil
+	}
+
+	return errors.New("json field can be either boolean or string")
+}
+
+func (bs *BoolString) Value() bool {
+	if bs.IsValidBool {
+		return bs.BoolValue
+	}
+	return bs.StringValue == "true"
 }

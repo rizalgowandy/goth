@@ -7,11 +7,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/markbates/goth"
-	"golang.org/x/oauth2"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"strconv"
+
+	"github.com/markbates/goth"
+	"golang.org/x/oauth2"
 )
 
 const (
@@ -98,7 +99,7 @@ func (p *Provider) FetchUser(session goth.Session) (goth.User, error) {
 		return user, fmt.Errorf("%s responded with a %d trying to fetch user information", p.providerName, response.StatusCode)
 	}
 
-	bits, err := ioutil.ReadAll(response.Body)
+	bits, err := io.ReadAll(response.Body)
 	if err != nil {
 		return user, err
 	}
@@ -148,12 +149,12 @@ func stringValue(v interface{}) string {
 	return v.(string)
 }
 
-//RefreshToken refresh token is not provided by yammer
+// RefreshToken refresh token is not provided by yammer
 func (p *Provider) RefreshToken(refreshToken string) (*oauth2.Token, error) {
 	return nil, errors.New("Refresh token is not provided by yammer")
 }
 
-//RefreshTokenAvailable refresh token is not provided by yammer
+// RefreshTokenAvailable refresh token is not provided by yammer
 func (p *Provider) RefreshTokenAvailable() bool {
 	return false
 }

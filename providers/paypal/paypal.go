@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"net/url"
 	"os"
@@ -20,12 +19,12 @@ const (
 	sandbox string = "sandbox"
 	envKey  string = "PAYPAL_ENV"
 
-	//Endpoints for paypal sandbox env
+	// Endpoints for paypal sandbox env
 	authURLSandbox         string = "https://www.sandbox.paypal.com/webapps/auth/protocol/openidconnect/v1/authorize"
 	tokenURLSandbox        string = "https://www.sandbox.paypal.com/webapps/auth/protocol/openidconnect/v1/tokenservice"
 	endpointProfileSandbox string = "https://www.sandbox.paypal.com/webapps/auth/protocol/openidconnect/v1/userinfo"
 
-	//Endpoints for paypal production env
+	// Endpoints for paypal production env
 	authURLProduction         string = "https://www.paypal.com/webapps/auth/protocol/openidconnect/v1/authorize"
 	tokenURLProduction        string = "https://www.paypal.com/webapps/auth/protocol/openidconnect/v1/tokenservice"
 	endpointProfileProduction string = "https://www.paypal.com/webapps/auth/protocol/openidconnect/v1/userinfo"
@@ -126,7 +125,7 @@ func (p *Provider) FetchUser(session goth.Session) (goth.User, error) {
 		return user, fmt.Errorf("%s responded with a %d trying to fetch user information", p.providerName, response.StatusCode)
 	}
 
-	bits, err := ioutil.ReadAll(response.Body)
+	bits, err := io.ReadAll(response.Body)
 	if err != nil {
 		return user, err
 	}
@@ -183,12 +182,12 @@ func userFromReader(r io.Reader, user *goth.User) error {
 	return nil
 }
 
-//RefreshTokenAvailable refresh token is provided by auth provider or not
+// RefreshTokenAvailable refresh token is provided by auth provider or not
 func (p *Provider) RefreshTokenAvailable() bool {
 	return true
 }
 
-//RefreshToken get new access token based on the refresh token
+// RefreshToken get new access token based on the refresh token
 func (p *Provider) RefreshToken(refreshToken string) (*oauth2.Token, error) {
 	token := &oauth2.Token{RefreshToken: refreshToken}
 	ts := p.config.TokenSource(goth.ContextForClient(p.Client()), token)
